@@ -34,7 +34,7 @@ module.exports = function ({ send, sockets, players, crypto }) {
       const ss = new Set([x.s]), same = []; O.forEach(c => { if (c.r === x.r && !ss.has(c.s)) { ss.add(c.s); same.push(c); } });
       for (let mk = 0; mk < (1 << same.length); mk++) {
         const b = [x]; same.forEach((c, i) => (mk >> i) & 1 && b.push(c));
-        for (let j = 0; j <= Math.min(J.length, 2); j++) if (b.length + j >= 3 && b.length + j <= 4) add([...b, ...J.slice(0, j)]);
+        for (let j = 0; j <= Math.min(J.length, 2); j++) if (b.length + j >= 3 && b.length + j <= 5) add([...b, ...J.slice(0, j)]);
       }
       const bs = {}; O.forEach(c => { if (c.s === x.s && !bs[c.r]) bs[c.r] = c; });
       for (const hi of [0, 1]) {
@@ -101,7 +101,7 @@ module.exports = function ({ send, sockets, players, crypto }) {
       hand: me.hand, melds: r.melds, disc: r.disc[r.disc.length - 1] || null, stock: r.stock.length,
       min: r.min, turn: r.turn, ph: r.ph, first: r.first, wasOpen: r.wasOpen,
       took: (i === r.turn && r.took) ? r.took.id : null,
-      rows: r.rows, over: r.over, winner: r.winner, ready: [...r.ready]
+      rows: r.rows, buy: r.buyId === me.id, buyName: (r.seats.find(s => s.id === r.buyId) || {}).name || '', buyScore: Math.max(0, ...r.seats.filter(s => s.id !== r.buyId && !s.dead).map(s => s.score)), over: r.over, winner: r.winner, ready: [...r.ready]
     };
   }
   const rumPush = r => r.seats.forEach((s, i) => send(sockets.get(s.id), rumView(r, i)));
@@ -109,16 +109,16 @@ module.exports = function ({ send, sockets, players, crypto }) {
   function rumJoin(id, roomId) {
     rumLeave(id);
     const key = 'rum:' + roomId; let r = RUM.get(key);
-    if (!r) { r = { id: key, seats: [], hostId: id, status: 'wait', stock: [], disc: [], melds: [], min: 51, turn: 0, ph: 'draw', first: false, took: null, laid: [], wasOpen: false, rows: null, over: false, winner: '', ready: new Set(), n: 0, starterId: null }; RUM.set(key, r); }
+    if (!r) { r = { id: key, seats: [], hostId: id, status: 'wait', stock: [], disc: [], melds: [], min: 51, turn: 0, ph: 'draw', first: false, took: null, laid: [], wasOpen: false, rows: null, over: false, winner: '', ready: new Set(), n: 0, starterId: null, buyId: null, buyUsed: false }; RUM.set(key, r); }
     if (r.status !== 'wait') return rumErr(id, 'اللعبة بدات في هذي الطاولة');
     if (r.seats.length >= 4) return rumErr(id, 'الطاولة مليانة (4 لاعبين)');
-    r.seats.push({ id, name: (players.get(id) || {}).name || 'لاعب', hand: [], opened: false, score: 0, dead: false, out: false, left: false });
+    r.seats.push({ id, name: (players.get(id) || {}).name || 'لاعب', hand: [], opened: false, score: 0, dead: false, out: false, left: false, h45: false, bought: false, pending: false });
     if (r.seats.length === 4) return rumStartGame(r);   // الطاولة كملت: تبدا وحدها
     rumPush(r);
   }
   function rumStartGame(r) {
     r.n = r.seats.length; r.over = false; r.winner = '';
-    r.seats.forEach(s => { s.score = 0; s.dead = false; });
+    r.seats.forEach(s => { s.score = 0; s.dead = false; s.bought = false; s.pending = false; }); r.buyId = null; r.buyUsed = false;
     rumDeal(r, crypto.randomInt(r.n));
   }
   function rumStart(id) {
@@ -134,7 +134,7 @@ module.exports = function ({ send, sockets, players, crypto }) {
   }
   function rumDeal(r, st) {
     r.stock = rumDeck(); r.disc = []; r.melds = []; r.min = 51; r.first = true; r.rows = null; r.ready = new Set(); r.status = 'play';
-    r.seats.forEach((s, i) => { s.opened = false; s.out = false; s.hand = []; if (!s.dead) for (let k = 0; k < (i === st ? 15 : 14); k++) s.hand.push(r.stock.pop()); });
+    r.seats.forEach((s, i) => { s.opened = false; s.out = false; s.h45 = false; s.hand = []; if (!s.dead) for (let k = 0; k < (i === st ? 15 : 14); k++) s.hand.push(r.stock.pop()); });
     rumTurn(r, st); rumPush(r);
   }
   function rumTurn(r, i) { r.turn = i; r.took = null; r.laid = []; r.wasOpen = r.seats[i].opened; r.ph = r.first ? 'play' : 'draw'; }
@@ -161,18 +161,13 @@ module.exports = function ({ send, sockets, players, crypto }) {
     }
     s.hand.push(c); r.ph = 'play'; rumPush(r);
   }
-  function rumUndo(id) {
-    const x = rumCur(id, 'play'); if (!x) return; const { r, s } = x;
-    if (!r.took || s.opened) return;
-    s.hand = s.hand.filter(c => c !== r.took); r.disc.push(r.took); r.took = null; r.ph = 'draw'; rumPush(r);
-  }
+  function rumUndo(id) { rumErr(id, 'ما فماش رجوع: المطيشة اللي هزيتها لازم تجيبك المنع ولا الفرشة'); }
   function rumPenalty(r, i, text) {   // 100 + تخرج من الجولة + كفك يرجع للكومة
     const s = r.seats[i];
     s.score += 100; s.out = true; r.stock.unshift(...s.hand); s.hand = [];
     send(sockets.get(s.id), { type: 'rum:note', text: text + ' — أخذت 100 وتستنى الجولة تكمل' });
     rumAdvance(r);
   }
-  const rumHas45 = (r, i, ps = []) => ps.some(p => p.cs.length >= 4) || r.melds.some(m => m.o === i && m.cards.length >= 4);
   const rumPlaceable = (r, c) => r.melds.some(m => RM.trySwap(m, c) || RM.meld([...m.cards, c]));
   function rumParse(s, groups) {
     if (!Array.isArray(groups) || groups.length > 8) return null;
@@ -189,7 +184,7 @@ module.exports = function ({ send, sockets, players, crypto }) {
     const ps = rumParse(s, d.groups); if (!ps) return rumErr(id, 'تشكيلة غالطة');
     if (!ps.length && s.opened) return rumErr(id, 'ما فماش تشكيلة تتنزّل');
     const tot = ps.reduce((a, p) => a + p.m.pts, 0), used = ps.reduce((a, p) => a + p.cs.length, 0);
-    if (s.hand.length === used && !rumHas45(r, i, ps)) return rumErr(id, 'الفرشة لازم فيها باكو 4 ولا 5 على الأقل');
+    if (s.hand.length === used && !(s.h45 || ps.some(p => p.cs.length >= 4))) return rumErr(id, 'الفرشة لازم فيها باكو 4 ولا 5 على الأقل');
     if (!s.opened) {
       if (tot < r.min) {
         if (r.took && RM.pts(RM.solve(s.hand)) < r.min) return rumPenalty(r, i, `هزيت المطيشة وما جبتش ${r.min} ❌`);
@@ -198,7 +193,7 @@ module.exports = function ({ send, sockets, players, crypto }) {
       s.opened = true; r.min = tot + 1;
     }
     const u = new Set();
-    ps.forEach(p => { r.melds.push({ o: i, cards: p.m.ord, k: p.m.k }); r.laid.push({ n: p.cs.length }); p.cs.forEach(c => u.add(c.id)); });
+    ps.forEach(p => { r.melds.push({ o: i, cards: p.m.ord, k: p.m.k }); r.laid.push({ n: p.cs.length }); if (p.cs.length >= 4) s.h45 = true; p.cs.forEach(c => u.add(c.id)); });
     s.hand = s.hand.filter(c => !u.has(c.id));
     if (!s.hand.length) return rumEnd(r, i);
     rumPush(r);
@@ -210,9 +205,9 @@ module.exports = function ({ send, sockets, players, crypto }) {
     for (const cid of d.cards) {
       const c = s.hand.find(h => h.id === +cid); if (!c) break;
       const sw = RM.trySwap(m, c);
-      if (sw) { m.cards = sw.r.ord; m.k = sw.r.k; s.hand = s.hand.filter(h => h !== c); s.hand.push(sw.j); send(sockets.get(id), { type: 'rum:note', text: 'هزيت الجوكر 🃏' }); continue; }
+      if (sw) { m.cards = sw.r.ord; m.k = sw.r.k; s.hand = s.hand.filter(h => h !== c); s.hand.push(sw.j); send(sockets.get(id), { type: 'rum:note', text: 'هزيت الجوكر 🃏' }); if (m.cards.length >= 4) s.h45 = true; continue; }
       const rr = RM.meld([...m.cards, c]); if (!rr) { rumErr(id, 'الورقة ما تنجمش تتبلاص هنا'); break; }
-      m.cards = rr.ord; m.k = rr.k; s.hand = s.hand.filter(h => h !== c);
+      m.cards = rr.ord; m.k = rr.k; s.hand = s.hand.filter(h => h !== c); if (m.cards.length >= 4) s.h45 = true;
     }
     if (!s.hand.length) return rumEnd(r, i);
     rumPush(r);
@@ -222,8 +217,8 @@ module.exports = function ({ send, sockets, players, crypto }) {
     const c = s.hand.find(h => h.id === +d.card); if (!c) return rumErr(id, 'اختار ورقة باش تطيّشها');
     const legal = s.hand.filter(h => h.r && !rumPlaceable(r, h));       // ما تطيّشش جوكر ولا ورقة تتبلاص
     if (legal.length && !legal.includes(c)) return rumErr(id, !c.r ? 'الجوكر ممنوع يطيش 🃏❌' : 'ورقة بلاص ممنوع تطيشها ❌ لازم تبلاصيها');
-    if (r.took && !s.opened) return rumErr(id, 'هزيت المطيشة: لازم تمنع بيها ولا ترجّعها');
-    if (s.hand.length === 1 && !rumHas45(r, i) && !r.laid.some(l => l.n >= 4)) return rumErr(id, 'ما تنجمش تفرش: لازم باكو فيه 4 ولا 5');
+    if (r.took && !s.opened) return rumPenalty(r, i, 'هزيت المطيشة وما منعتش ولا فرشت ❌');
+    if (s.hand.length === 1 && !s.h45) return rumErr(id, 'ما تنجمش تفرش: لازم باكو فيه 4 ولا 5');
     s.hand = s.hand.filter(h => h !== c); r.disc.push(c);
     if (!s.hand.length) return rumEnd(r, i);
     rumAdvance(r);
@@ -231,14 +226,14 @@ module.exports = function ({ send, sockets, players, crypto }) {
   function rumFlush(id) {           // فرشت 🏁 — السيرفر يثبت، وإلا 100 وتخرج من الجولة
     const x = rumCur(id, 'play'); if (!x) return; const { r, i, s } = x;
     const ms = RM.solve(s.hand, true), used = new Set(ms.flat().map(c => c.id));
-    let placed = 0;
+    let placed = 0, big = false;
     const all = [...r.melds.map(m => ({ ...m, cards: [...m.cards] })), ...ms.map(g => { const m = RM.meld(g); return { o: i, cards: m.ord, k: m.k }; })];
     const left = s.hand.filter(c => !used.has(c.id)).filter(c => {
-      for (const m of all) { const rr = RM.meld([...m.cards, c]); if (rr) { m.cards = rr.ord; m.k = rr.k; placed++; return false; } }
+      for (const m of all) { const rr = RM.meld([...m.cards, c]); if (rr) { m.cards = rr.ord; m.k = rr.k; placed++; if (m.cards.length >= 4) big = true; return false; } }
       return true;
     });
     const own = ms.flat().length, total = own + placed, needed = r.wasOpen ? s.hand.length - 1 : 14;
-    const has45 = ms.some(g => g.length >= 4) || r.melds.some(m => m.o === i && m.cards.length >= 4) || all.some(m => m.cards.length >= 4);
+    const has45 = s.h45 || big || ms.some(g => g.length >= 4);
     if (left.length > 1 || total !== needed)
       return rumPenalty(r, i, left.length > 1 ? `فرشة غالطة ❌ باقيلك ${left.length} ورقات ما تتبلاصش` : `فرشة غالطة ❌ عندك ${total} مش ${needed} (${own} باكو + ${placed} بلاص)`);
     if (!has45) return rumPenalty(r, i, 'فرشة غالطة ❌ لازم باكو فيه 4 ولا 5 على الأقل (حتى بالبلاص)');
@@ -253,22 +248,38 @@ module.exports = function ({ send, sockets, players, crypto }) {
       else if (s.out) { d = 0; note = s.left ? 'غادر (أخذ 100)' : 'غلط في الفرشة (أخذ 100)'; }
       else if (!s.opened) d = 100;
       else d = s.hand.reduce((a, c) => a + RM.hv(c), 0);
-      s.score += d; return { name: s.name, d, score: s.score, note };
+      s.score += d; return { sid: s.id, name: s.name, d, score: s.score, note };
     }).filter(Boolean);
     r.starterId = w != null ? r.seats[w].id : (r.seats[r.turn] || {}).id;
-    r.seats.forEach(s => { if (s.score >= 300) s.dead = true; s.out = false; });
+    const dying = r.seats.filter(s => !s.dead && s.score >= 300);
+    r.buyId = null;
+    dying.forEach(s => {
+      const row = r.rows.find(x => x.sid === s.id);
+      if (dying.length === 1 && !r.buyUsed && !s.bought && r.n >= 3) { r.buyId = s.id; r.buyUsed = true; s.pending = true; if (row) row.note += ' 💀 فوّت 300 — يقدر يشري'; }
+      else { s.dead = true; if (row) row.note += s.bought ? ' 💀 مات بعد الشراء (دوبل)' : ' 💀'; }
+    });
+    r.seats.forEach(s => { s.out = false; });
     r.seats = r.seats.filter(s => !s.left);
     if (!r.seats.some(s => s.id === r.hostId) && r.seats[0]) r.hostId = r.seats[0].id;
+    r.ready = new Set(); rumCheckOver(r); rumPush(r);
+  }
+  function rumCheckOver(r) {
     const alive = r.seats.filter(s => !s.dead);
     r.over = alive.length <= Math.max(1, r.n - 2) || r.seats.length < 2;
     if (r.over) {
       const pool = alive.length ? alive : r.seats, best = pool.slice().sort((a, b) => a.score - b.score)[0];
-      r.winner = best ? best.name : ''; r.status = 'end';
+      r.winner = best ? best.name : ''; r.status = 'end'; r.buyId = null;
     } else r.status = 'round';
-    r.ready = new Set(); rumPush(r);
+  }
+  function rumBuy(id, yes) {        // الشراء: ترجع بأكثر سكور في الطاولة
+    const r = rumOf(id); if (!r || r.status !== 'round' || r.buyId !== id) return;
+    const s = r.seats.find(x => x.id === id); s.pending = false; r.buyId = null;
+    if (yes) { const o = r.seats.filter(x => x !== s && !x.dead).map(x => x.score); s.score = o.length ? Math.max(...o) : s.score; s.bought = true; }
+    else s.dead = true;
+    rumCheckOver(r); rumPush(r);
   }
   function rumNextRound(id) {
-    const r = rumOf(id); if (!r || r.status !== 'round') return;
+    const r = rumOf(id); if (!r || r.status !== 'round' || r.buyId) return;
     r.ready.add(id);
     if (r.seats.filter(s => !s.dead).every(s => r.ready.has(s.id))) {
       let st = r.seats.findIndex(s => s.id === r.starterId && !s.dead);
@@ -285,7 +296,7 @@ module.exports = function ({ send, sockets, players, crypto }) {
       if (r.seats.filter(rumActive).length < 2) return rumEnd(r, null);
       return r.turn === i ? rumAdvance(r) : rumPush(r);
     }
-    r.seats.splice(i, 1);
+    r.seats.splice(i, 1); if (r.buyId === id) r.buyId = null;
     if (!r.seats.length) return void RUM.delete(r.id);
     if (r.hostId === id) r.hostId = r.seats[0].id;
     if (r.status === 'round' && r.seats.filter(x => !x.dead).length < 2) { r.over = true; r.status = 'end'; r.winner = (r.seats.find(x => !x.dead) || r.seats[0]).name; }
@@ -300,6 +311,7 @@ module.exports = function ({ send, sockets, players, crypto }) {
         case 'rum:start':   rumStart(id); break;
         case 'rum:draw':    rumDraw(id, d.from); break;
         case 'rum:undo':    rumUndo(id); break;
+        case 'rum:buy':     rumBuy(id, !!d.yes); break;
         case 'rum:open':
         case 'rum:lay':     rumLay(id, d); break;
         case 'rum:place':   rumPlace(id, d); break;
