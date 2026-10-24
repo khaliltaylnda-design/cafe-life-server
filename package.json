@@ -1,0 +1,29 @@
+
+{
+  "name": "cafe-life-server",
+  "version": "3.1.0",
+  "description": "Cafe Life multiplayer server with PostgreSQL",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "cafe",
+    "websocket",
+    "express",
+    "postgresql",
+    "server"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "ws": "^8.17.0",
+    "chess.js": "^1.4.0",
+    "pg": "^8.16.3"
+  }
+}
