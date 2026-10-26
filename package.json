@@ -1,0 +1,31 @@
+{
+  "name": "cafe-life-server",
+  "version": "4.2.0",
+  "description": "Cafe Life multiplayer server with PostgreSQL, WebSocket, and Stripe payments",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "cafe",
+    "websocket",
+    "express",
+    "postgresql",
+    "server",
+    "stripe",
+    "payments"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "chess.js": "^1.4.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "pg": "^8.16.3",
+    "stripe": "^17.5.0",
+    "ws": "^8.17.0"
+  }
+}
